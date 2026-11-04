@@ -1,0 +1,32 @@
+# Secrets and tokens
+.env
+.env.*
+!.env.example
+access_token.txt
+access_token.json
+token.json
+token_meta.json
+token_*.json
+*.token
+secrets.toml
+.streamlit/secrets.toml
+
+# Caches and logs (may contain request metadata)
+cache/
+logs/
+presets/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
