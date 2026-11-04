@@ -321,6 +321,36 @@ The suite uses synthetic candles only and covers:
 - preset JSON round-trip, overwrite, delete, invalid files and invalid values;
 - FYERS auth-error detection, rate-limit retry and invalid-symbol fast failure.
 
+## Hugging Face Space (Gradio)
+
+The repository ships two front ends that share the same scanner code:
+
+- `app.py` - Streamlit, for local use (`streamlit run app.py`, port 8501).
+- `app_gradio.py` - Gradio, used by the Hugging Face Space
+  (`python app_gradio.py`, port 7860).
+
+The Space metadata lives in the YAML header above (`sdk: gradio`,
+`app_file: app_gradio.py`). To deploy:
+
+1. Create a Gradio Space and add these repository secrets under
+   **Settings -> Variables and secrets**:
+   - `FYERS_CLIENT_ID`
+   - `FYERS_SECRET_KEY`
+   - `FYERS_REDIRECT_URI=https://<owner>-<space>.hf.space`
+   - `FYERS_TOKEN_FILE=/home/user/data/access_token.txt`
+   - `FYERS_TOKEN_META_FILE=/home/user/data/token_meta.json`
+   - `FYERS_CACHE_DIR=/home/user/data/cache`
+   - `FYERS_LOG_DIR=/home/user/data/logs`
+   - `FYERS_PRESETS_FILE=/home/user/data/presets.json`
+2. Register the same HTTPS URL as the redirect URI in the FYERS API dashboard.
+3. Push this repository to the Space remote
+   (`git remote add space https://huggingface.co/spaces/<owner>/<space>`).
+
+Open the Space, click **Generate FYERS login URL**, complete the FYERS login,
+and the `auth_code` is exchanged automatically when FYERS redirects back.
+Space storage is ephemeral, so the saved token and cache disappear on restart
+and you simply log in again. Keep `.env` and `access_token.txt` out of git.
+
 The live scanner does not use synthetic data.
 
 ## Implementation phases
