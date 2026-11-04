@@ -80,6 +80,9 @@ class PatternDetector:
         if not np.isfinite(avwap.iloc[-1]) or float(avwap.iloc[-1]) <= 0:
             return None
 
+        if not self._passes_close_filters(frame, float(avwap.iloc[-1])):
+            return None
+
         metrics = compute_candle_metrics(frame)
         close = frame["close"].astype("float64")
         low = frame["low"].astype("float64")
@@ -192,6 +195,35 @@ class PatternDetector:
             anchor_timestamp=anchor_timestamp,
             latest_atr=latest_atr,
         )
+
+    def _passes_close_filters(self, frame: pd.DataFrame, avwap_close: float) -> bool:
+        """Check optional last-candle close-above filters.
+
+        The last row is the most recent completed candle. Each enabled filter
+        requires a strict close above its reference line.
+        """
+        config = self.config
+        if not (config.require_close_above_avwap or config.require_close_above_vwap):
+            return True
+
+        close = float(pd.to_numeric(frame["close"], errors="coerce").iloc[-1])
+        if not np.isfinite(close):
+            return False
+
+        if config.require_close_above_avwap and close <= avwap_close:
+            return False
+
+        if config.require_close_above_vwap:
+            if "session_vwap" not in frame.columns:
+                raise ValueError(
+                    "Pattern detection needs a 'session_vwap' column when "
+                    "require_close_above_vwap is enabled"
+                )
+            session_vwap = pd.to_numeric(frame["session_vwap"], errors="coerce").iloc[-1]
+            if not np.isfinite(session_vwap) or close <= float(session_vwap):
+                return False
+
+        return True
 
     def _classify(
         self,

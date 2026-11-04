@@ -65,6 +65,29 @@ def test_presets_sort_and_overwrite(tmp_path):
     assert len(store.list()) == 2
 
 
+def test_close_filters_roundtrip(tmp_path):
+    store = PresetStore(tmp_path / "scanner.json")
+    config = PatternConfig(
+        require_close_above_avwap=True,
+        require_close_above_vwap=True,
+    )
+    store.save(ScannerPreset.from_config("Above both", "60", config))
+
+    loaded = store.get("Above both")
+    assert loaded is not None
+    assert loaded.config.require_close_above_avwap is True
+    assert loaded.config.require_close_above_vwap is True
+
+
+def test_legacy_preset_defaults_close_filters_off():
+    raw = ScannerPreset.from_config("Old", "60", _config()).to_dict()
+    raw.pop("require_close_above_avwap")
+    raw.pop("require_close_above_vwap")
+    preset = ScannerPreset.from_dict("Old", raw)
+    assert preset.config.require_close_above_avwap is False
+    assert preset.config.require_close_above_vwap is False
+
+
 def test_delete_preset(tmp_path):
     store = PresetStore(tmp_path / "scanner.json")
     store.save(ScannerPreset.from_config("Delete me", "60", _config()))

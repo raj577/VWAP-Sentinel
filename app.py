@@ -69,6 +69,8 @@ FILTER_DEFAULTS: dict[str, Any] = {
     "f_atr": 2.0,
     "f_cons_range": 1.0,
     "f_classes": list(PATTERN_TYPES),
+    "f_close_above_avwap": False,
+    "f_close_above_vwap": False,
 }
 
 
@@ -317,6 +319,25 @@ def build_pattern_config() -> tuple[PatternConfig | None, str | None, str]:
             )
         )
 
+    st.caption("Last candle confirmation")
+    confirmation_column, vwap_column = st.columns(2)
+    require_close_above_avwap = confirmation_column.checkbox(
+        "Close above AVWAP",
+        key="f_close_above_avwap",
+        help=(
+            "Keep only contracts whose most recent completed candle closed "
+            "strictly above the contract-start AVWAP."
+        ),
+    )
+    require_close_above_vwap = vwap_column.checkbox(
+        "Close above session VWAP",
+        key="f_close_above_vwap",
+        help=(
+            "Keep only contracts whose most recent completed candle closed "
+            "strictly above the daily-reset session VWAP."
+        ),
+    )
+
     classifications = st.multiselect(
         "Pattern classification filter",
         options=list(PATTERN_TYPES),
@@ -337,6 +358,8 @@ def build_pattern_config() -> tuple[PatternConfig | None, str | None, str]:
             max_candle_range_atr=atr_multiple if use_atr else None,
             consolidation_range_pct=consolidation_range / 100.0,
             allowed_patterns=tuple(classifications),
+            require_close_above_avwap=require_close_above_avwap,
+            require_close_above_vwap=require_close_above_vwap,
         )
     except ValueError as exc:
         return None, str(exc), ""
@@ -346,6 +369,12 @@ def build_pattern_config() -> tuple[PatternConfig | None, str | None, str]:
         f"low {max_low_below:.2f}% · body {max_body:.2f} · "
         f"{min_candles}-{max_candles} candles"
     )
+    if require_close_above_avwap and require_close_above_vwap:
+        summary += " · close > AVWAP & VWAP"
+    elif require_close_above_avwap:
+        summary += " · close > AVWAP"
+    elif require_close_above_vwap:
+        summary += " · close > VWAP"
     return config, None, summary
 
 

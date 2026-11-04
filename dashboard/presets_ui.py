@@ -53,6 +53,8 @@ def _apply_preset_to_session(
     )
     st.session_state["f_cons_range"] = config.consolidation_range_pct * 100.0
     st.session_state["f_classes"] = list(config.allowed_patterns)
+    st.session_state["f_close_above_avwap"] = config.require_close_above_avwap
+    st.session_state["f_close_above_vwap"] = config.require_close_above_vwap
 
 
 def _delete_preset(store: PresetStore, name: str) -> None:

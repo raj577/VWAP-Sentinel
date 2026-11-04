@@ -67,6 +67,8 @@ class ScannerPreset:
                 config.consolidation_range_pct * 100.0, 6
             ),
             "allowed_patterns": list(config.allowed_patterns),
+            "require_close_above_avwap": config.require_close_above_avwap,
+            "require_close_above_vwap": config.require_close_above_vwap,
             "saved_at": self.saved_at,
         }
 
@@ -91,6 +93,12 @@ class ScannerPreset:
                 max_candle_range_atr=atr_multiple if use_atr else None,
                 consolidation_range_pct=float(raw["consolidation_range_pct"]) / 100.0,
                 allowed_patterns=tuple(str(value) for value in allowed),
+                require_close_above_avwap=bool(
+                    raw.get("require_close_above_avwap", False)
+                ),
+                require_close_above_vwap=bool(
+                    raw.get("require_close_above_vwap", False)
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise PresetError(f"Preset {name!r} is invalid: {exc}") from exc

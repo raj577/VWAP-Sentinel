@@ -57,6 +57,8 @@ class PatternConfig:
     consolidation_range_pct: float = 0.01
     hugging_min_candles: int = 2
     allowed_patterns: tuple[str, ...] = PATTERN_TYPES
+    require_close_above_avwap: bool = False
+    require_close_above_vwap: bool = False
 
     def __post_init__(self) -> None:
         if self.min_candles < 1:

@@ -148,3 +148,54 @@ def test_classification_filter_can_exclude_matches():
     frame = add_indicators(make_frame(pattern_count=2))
     config = PatternConfig(allowed_patterns=(PATTERN_CONSOLIDATION,))
     assert PatternDetector(config).detect(frame) is None
+
+
+def _close_relative_frame(last_close: float, session_vwap: float = 100.0) -> pd.DataFrame:
+    candle = {
+        "open": last_close - 0.05,
+        "high": last_close + 0.15,
+        "low": last_close - 0.20,
+        "close": last_close,
+        "volume": 1000.0,
+    }
+    frame = add_indicators(make_frame(pattern_candles=[candle]))
+    frame["avwap"] = 100.0
+    frame["session_vwap"] = session_vwap
+    return frame
+
+
+def test_close_above_avwap_filter_accepts_close_above():
+    frame = _close_relative_frame(100.10)
+    config = PatternConfig(require_close_above_avwap=True)
+    assert PatternDetector(config).detect(frame) is not None
+
+
+def test_close_above_avwap_filter_rejects_close_below():
+    frame = _close_relative_frame(99.95)
+    assert PatternDetector().detect(frame) is not None
+    config = PatternConfig(require_close_above_avwap=True)
+    assert PatternDetector(config).detect(frame) is None
+
+
+def test_close_above_vwap_filter_accepts_and_rejects():
+    config = PatternConfig(require_close_above_vwap=True)
+    above = _close_relative_frame(100.10, session_vwap=99.90)
+    assert PatternDetector(config).detect(above) is not None
+    below = _close_relative_frame(100.10, session_vwap=100.30)
+    assert PatternDetector(config).detect(below) is None
+
+
+def test_both_close_filters_require_each_reference():
+    frame = _close_relative_frame(100.10, session_vwap=100.30)
+    config = PatternConfig(
+        require_close_above_avwap=True,
+        require_close_above_vwap=True,
+    )
+    assert PatternDetector(config).detect(frame) is None
+
+
+def test_close_above_vwap_filter_requires_session_vwap_column():
+    frame = _close_relative_frame(100.10).drop(columns=["session_vwap"])
+    config = PatternConfig(require_close_above_vwap=True)
+    with pytest.raises(ValueError):
+        PatternDetector(config).detect(frame)

@@ -1,3 +1,10 @@
+---
+title: VWAP Sentinel
+sdk: gradio
+app_file: app_gradio.py
+pinned: false
+---
+
 # VWAP Sentinel
 
 Anchored VWAP consolidations scanner for NSE futures.
@@ -23,6 +30,8 @@ or **AVWAP RECLAIM**. It never places orders.
 - Separate daily session VWAP for chart context.
 - Configurable proximity, body ratio, candle count (1-5), classification and
   optional ATR range cap.
+- Optional confirmation that the latest completed candle closed above the
+  contract-start AVWAP and/or the session VWAP.
 - Chunked historical requests, retry/backoff, rate limiting, disk cache.
 - Streamlit summary, filterable/sortable results and interactive Plotly charts
   with pattern highlighting, price labels and AVWAP distance.
@@ -186,6 +195,8 @@ local token files.
    - maximum candle low distance below AVWAP,
    - maximum candle body ratio,
    - pattern classifications,
+   - optional last-candle confirmation: close above AVWAP and/or close above
+     session VWAP (enable either, both, or neither),
    - advanced pattern range / optional ATR cap.
 5. Optionally save the current timeframe and pattern filters as a named preset
    under **Scanner presets**. Presets can be loaded or deleted later; universe
@@ -226,8 +237,8 @@ The historical fetch starts well before the contract listing date and uses the
 first returned candle as the anchor. The default 120-day lookback comfortably
 covers the maximum NSE futures contract tenure.
 
-Session VWAP is calculated separately and resets each trading day. It is used
-only on the chart.
+Session VWAP is calculated separately and resets each trading day. It is shown
+on the chart and can optionally be used as a last-candle close filter.
 
 ### Default detector thresholds
 
@@ -243,11 +254,17 @@ only on the chart.
 | Touch tolerance | 0.10% of AVWAP |
 | Consolidation classification | >= 3 candles and <= 1.0% window range |
 | Hugging classification | >= 2 candles near/touching AVWAP |
+| Last candle close above AVWAP | Off (optional) |
+| Last candle close above session VWAP | Off (optional) |
 
 Every candle in the detected window must satisfy the proximity and small-body
 conditions. The detector takes the longest eligible contiguous run ending at
 the latest completed candle, then shortens it from the oldest side if the total
 range is too wide.
+
+The two optional close filters look only at the most recent completed candle.
+Each enabled filter requires a **strict** close above its reference line; when
+both are enabled the close must be above AVWAP **and** session VWAP.
 
 ### Classifications
 
@@ -295,6 +312,7 @@ The suite uses synthetic candles only and covers:
 - pattern detection with exactly 1, 2, 3, 4 and 5 candles;
 - candle low touching AVWAP;
 - AVWAP reclaim classification;
+- optional last-candle close above AVWAP and/or session VWAP;
 - missing market data;
 - expired futures exclusion and current-expiry preference;
 - instrument master parsing (options, invalid symbols, duplicates);
