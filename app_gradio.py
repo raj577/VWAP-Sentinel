@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import html
 import os
 import socket
 import subprocess
@@ -745,11 +746,12 @@ async def index(request: Request) -> HTMLResponse:
     target = f"/{BASE_PATH}/"
     if query:
         target = f"{target}?{query}"
+    safe_target = html.escape(target, quote=True)
     return HTMLResponse(
         f'<!doctype html><meta charset="utf-8">'
-        f'<meta http-equiv="refresh" content="0; url={target}">'
+        f'<meta http-equiv="refresh" content="0; url={safe_target}">'
         f'<title>VWAP Sentinel</title>'
-        f'<p>Opening VWAP Sentinel. <a href="{target}">Continue</a>.</p>'
+        f'<p>Opening VWAP Sentinel. <a href="{safe_target}">Continue</a>.</p>'
     )
 
 
