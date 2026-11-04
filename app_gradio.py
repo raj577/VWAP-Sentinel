@@ -45,6 +45,11 @@ if spaces is not None:  # ZeroGPU Spaces refuse to boot without one guarded call
         """Placeholder so a ZeroGPU Space can start; the scanner runs on CPU."""
         return "ok"
 
+else:
+
+    def _zero_gpu_probe() -> str:
+        return "ok"
+
 from config import Settings, setup_logging
 from dashboard.charts import plot_pattern_chart
 from data.cache import HistoricalCache
@@ -642,6 +647,12 @@ def build_demo() -> gr.Blocks:
             outputs=[contracts, universe_md],
         )
 
+        gpu_keepalive = gr.Button(visible=False)
+        gpu_keepalive.click(
+            _zero_gpu_probe,
+            outputs=gr.Markdown(visible=False),
+        )
+
     return demo
 
 
@@ -718,7 +729,6 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-app = gr.mount_gradio_app(app, demo, path="/gradio")
 
 
 def _proxy_headers(headers) -> dict[str, str]:
@@ -816,8 +826,25 @@ async def proxy_websocket(websocket: WebSocket, path: str) -> None:
             pass
 
 
+GRADIO_INTERNAL_PORT = int(os.getenv("GRADIO_INTERNAL_PORT", "7861"))
+
+
+def _start_gradio() -> None:
+    """Launch the Gradio UI internally so ZeroGPU detects its guarded call."""
+
+    demo.launch(
+        server_name=UPSTREAM_HOST,
+        server_port=GRADIO_INTERNAL_PORT,
+        prevent_thread_lock=True,
+        ssr_mode=False,
+        quiet=True,
+        show_error=True,
+    )
+
+
 def main() -> None:
     global _streamlit_process
+    _start_gradio()
     _streamlit_process = _start_streamlit()
     atexit.register(_streamlit_process.terminate)
     port = int(
