@@ -19,6 +19,18 @@ from typing import Any
 import gradio as gr
 import pandas as pd
 
+try:  # Hugging Face ZeroGPU runtime shim; absent outside Spaces.
+    import spaces
+except Exception:  # pragma: no cover - local development
+    spaces = None
+
+if spaces is not None:  # ZeroGPU Spaces refuse to boot without one guarded call.
+
+    @spaces.GPU
+    def _zero_gpu_probe() -> str:
+        """Placeholder so a ZeroGPU Space can start; the scanner runs on CPU."""
+        return "ok"
+
 from config import Settings, setup_logging
 from dashboard.charts import plot_pattern_chart
 from data.cache import HistoricalCache
