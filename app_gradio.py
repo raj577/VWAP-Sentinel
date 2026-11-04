@@ -1,19 +1,18 @@
 """Hugging Face Space entry point for VWAP Sentinel.
 
 The Space runs on the Gradio SDK, but the primary UI is the original Streamlit
-application. Gradio's ASGI server reverse-proxies a Streamlit subprocess under
-``/s`` (HTTP and WebSocket), so the exact same ``app.py`` runs locally and on the
-Space, while the Gradio UI stays available under ``/gradio``.
+application. Gradio's ASGI server reverse-proxies a Streamlit subprocess at the
+site root (HTTP and WebSocket), so the exact same ``app.py`` runs locally and on
+the Space. Gradio itself starts on an internal port only to satisfy ZeroGPU.
 
     streamlit run app.py   # http://localhost:8501
-    python app_gradio.py   # http://localhost:7860  -> Streamlit at /s, Gradio at /gradio
+    python app_gradio.py   # http://localhost:7860  (Streamlit, proxied)
 """
 
 from __future__ import annotations
 
 import asyncio
 import atexit
-import html
 import os
 import socket
 import subprocess
@@ -32,7 +31,7 @@ import pandas as pd
 import uvicorn
 import websockets
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 try:  # Hugging Face ZeroGPU runtime shim; absent outside Spaces.
     import spaces
@@ -659,7 +658,6 @@ def build_demo() -> gr.Blocks:
 
 demo = build_demo()
 
-BASE_PATH = "s"
 UPSTREAM_HOST = "127.0.0.1"
 UPSTREAM_PORT = int(os.getenv("STREAMLIT_INTERNAL_PORT", "8502"))
 HOP_BY_HOP = {
@@ -692,8 +690,6 @@ def _start_streamlit() -> subprocess.Popen:
         UPSTREAM_HOST,
         "--server.port",
         str(UPSTREAM_PORT),
-        "--server.baseUrlPath",
-        BASE_PATH,
         "--server.headless",
         "true",
         "--server.enableCORS",
@@ -740,23 +736,8 @@ def _proxy_headers(headers) -> dict[str, str]:
     }
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> HTMLResponse:
-    query = request.url.query
-    target = f"/{BASE_PATH}/"
-    if query:
-        target = f"{target}?{query}"
-    safe_target = html.escape(target, quote=True)
-    return HTMLResponse(
-        f'<!doctype html><meta charset="utf-8">'
-        f'<meta http-equiv="refresh" content="0; url={safe_target}">'
-        f'<title>VWAP Sentinel</title>'
-        f'<p>Opening VWAP Sentinel. <a href="{safe_target}">Continue</a>.</p>'
-    )
-
-
 @app.api_route(
-    f"/{BASE_PATH}/{{path:path}}",
+    "/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
 )
 async def proxy_http(request: Request, path: str):
@@ -778,11 +759,11 @@ async def proxy_http(request: Request, path: str):
     )
 
 
-@app.websocket(f"/{BASE_PATH}/{{path:path}}")
+@app.websocket("/{path:path}")
 async def proxy_websocket(websocket: WebSocket, path: str) -> None:
     await websocket.accept()
     query = websocket.url.query
-    target = f"ws://{UPSTREAM_HOST}:{UPSTREAM_PORT}/{BASE_PATH}/{path}"
+    target = f"ws://{UPSTREAM_HOST}:{UPSTREAM_PORT}/{path}"
     if query:
         target = f"{target}?{query}"
     protocols = websocket.headers.get("sec-websocket-protocol")
