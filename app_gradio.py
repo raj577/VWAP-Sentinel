@@ -1,23 +1,37 @@
-"""Gradio dashboard for VWAP Sentinel.
+"""Hugging Face Space entry point for VWAP Sentinel.
 
-This is the Hugging Face Space entry point. It reuses the same configuration,
-FYERS client, indicators and detector as the Streamlit app (``app.py``), so both
-interfaces can run side by side:
+The Space runs on the Gradio SDK, but the primary UI is the original Streamlit
+application. Gradio's ASGI server reverse-proxies a Streamlit subprocess under
+``/s`` (HTTP and WebSocket), so the exact same ``app.py`` runs locally and on the
+Space, while the Gradio UI stays available under ``/gradio``.
 
-    python app_gradio.py          # http://localhost:7860
-    streamlit run app.py          # http://localhost:8501
+    streamlit run app.py   # http://localhost:8501
+    python app_gradio.py   # http://localhost:7860  -> Streamlit at /s, Gradio at /gradio
 """
 
 from __future__ import annotations
 
+import asyncio
+import atexit
 import os
+import socket
+import subprocess
+import sys
 import tempfile
+import time
+from contextlib import asynccontextmanager
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import gradio as gr
+import httpx
 import pandas as pd
+import uvicorn
+import websockets
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 try:  # Hugging Face ZeroGPU runtime shim; absent outside Spaces.
     import spaces
@@ -633,10 +647,184 @@ def build_demo() -> gr.Blocks:
 
 demo = build_demo()
 
-if __name__ == "__main__":
-    demo.launch(
-        server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
-        server_port=int(
-            os.getenv("GRADIO_SERVER_PORT") or os.getenv("PORT") or "7860"
-        ),
+BASE_PATH = "s"
+UPSTREAM_HOST = "127.0.0.1"
+UPSTREAM_PORT = int(os.getenv("STREAMLIT_INTERNAL_PORT", "8502"))
+HOP_BY_HOP = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
+}
+
+_streamlit_process: subprocess.Popen | None = None
+
+
+def _start_streamlit() -> subprocess.Popen:
+    """Run the unchanged Streamlit app on an internal loopback port."""
+
+    app_path = Path(__file__).with_name("app.py")
+    command = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app_path),
+        "--server.address",
+        UPSTREAM_HOST,
+        "--server.port",
+        str(UPSTREAM_PORT),
+        "--server.baseUrlPath",
+        BASE_PATH,
+        "--server.headless",
+        "true",
+        "--server.enableCORS",
+        "false",
+        "--server.enableXsrfProtection",
+        "false",
+        "--server.enableWebsocketCompression",
+        "false",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+    process = subprocess.Popen(command, cwd=str(app_path.parent))
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"Streamlit exited with code {process.returncode}")
+        try:
+            with socket.create_connection((UPSTREAM_HOST, UPSTREAM_PORT), timeout=1):
+                return process
+        except OSError:
+            time.sleep(0.5)
+    process.terminate()
+    raise RuntimeError("Streamlit did not become ready in time")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    app.state.client = httpx.AsyncClient(
+        base_url=f"http://{UPSTREAM_HOST}:{UPSTREAM_PORT}",
+        timeout=None,
     )
+    yield
+    await app.state.client.aclose()
+
+
+app = FastAPI(lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = gr.mount_gradio_app(app, demo, path="/gradio")
+
+
+def _proxy_headers(headers) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in HOP_BY_HOP
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request) -> HTMLResponse:
+    query = request.url.query
+    target = f"/{BASE_PATH}/"
+    if query:
+        target = f"{target}?{query}"
+    return HTMLResponse(
+        f'<!doctype html><meta charset="utf-8">'
+        f'<meta http-equiv="refresh" content="0; url={target}">'
+        f'<title>VWAP Sentinel</title>'
+        f'<p>Opening VWAP Sentinel. <a href="{target}">Continue</a>.</p>'
+    )
+
+
+@app.api_route(
+    f"/{BASE_PATH}/{{path:path}}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+)
+async def proxy_http(request: Request, path: str):
+    client: httpx.AsyncClient = request.app.state.client
+    upstream = await client.send(
+        client.build_request(
+            request.method,
+            request.url.path,
+            params=request.url.query,
+            headers=_proxy_headers(request.headers),
+            content=await request.body(),
+        ),
+        stream=True,
+    )
+    return StreamingResponse(
+        upstream.aiter_raw(),
+        status_code=upstream.status_code,
+        headers=_proxy_headers(upstream.headers),
+    )
+
+
+@app.websocket(f"/{BASE_PATH}/{{path:path}}")
+async def proxy_websocket(websocket: WebSocket, path: str) -> None:
+    await websocket.accept()
+    query = websocket.url.query
+    target = f"ws://{UPSTREAM_HOST}:{UPSTREAM_PORT}/{BASE_PATH}/{path}"
+    if query:
+        target = f"{target}?{query}"
+    protocols = websocket.headers.get("sec-websocket-protocol")
+    try:
+        async with websockets.connect(
+            target,
+            subprotocols=protocols.split(",") if protocols else None,
+            max_size=None,
+        ) as upstream:
+
+            async def client_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        return
+                    if message.get("text") is not None:
+                        await upstream.send(message["text"])
+                    elif message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+
+            async def upstream_to_client() -> None:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            pending = [
+                asyncio.create_task(client_to_upstream()),
+                asyncio.create_task(upstream_to_client()),
+            ]
+            _, running = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in running:
+                task.cancel()
+    except Exception:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+def main() -> None:
+    global _streamlit_process
+    _streamlit_process = _start_streamlit()
+    atexit.register(_streamlit_process.terminate)
+    port = int(
+        os.getenv("GRADIO_SERVER_PORT") or os.getenv("PORT") or "7860"
+    )
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
