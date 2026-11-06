@@ -29,12 +29,12 @@ DEFAULT_INDEX_UNDERLYINGS = (
 DEFAULT_INSTRUMENT_MASTER_URL = "https://public.fyers.in/sym_details/NSE_FO.csv"
 
 
-def _streamlit_secret(name: str) -> str:
+def _streamlit_secret(name: str) -> str | None:
     """Read a Streamlit Community Cloud secret without requiring Streamlit.
 
     Local runs and tests never reach this path because environment variables are
     resolved first; Streamlit raises when no secrets file exists, so every
-    failure degrades to an empty value.
+    failure degrades to ``None`` (missing), not an empty string.
     """
 
     try:
@@ -42,15 +42,21 @@ def _streamlit_secret(name: str) -> str:
 
         value = st.secrets.get(name)
     except Exception:
-        return ""
-    return str(value).strip() if value is not None else ""
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _env_str(name: str, default: str = "") -> str:
     value = os.getenv(name)
-    if value is None:
+    if value is None or not value.strip():
         value = _streamlit_secret(name)
-    return value.strip() if value is not None else default
+    if value is None:
+        return default
+    text = value.strip()
+    return text or default
 
 
 def _env_int(name: str, default: int) -> int:
