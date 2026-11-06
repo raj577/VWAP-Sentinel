@@ -29,8 +29,27 @@ DEFAULT_INDEX_UNDERLYINGS = (
 DEFAULT_INSTRUMENT_MASTER_URL = "https://public.fyers.in/sym_details/NSE_FO.csv"
 
 
+def _streamlit_secret(name: str) -> str:
+    """Read a Streamlit Community Cloud secret without requiring Streamlit.
+
+    Local runs and tests never reach this path because environment variables are
+    resolved first; Streamlit raises when no secrets file exists, so every
+    failure degrades to an empty value.
+    """
+
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(name)
+    except Exception:
+        return ""
+    return str(value).strip() if value is not None else ""
+
+
 def _env_str(name: str, default: str = "") -> str:
     value = os.getenv(name)
+    if value is None:
+        value = _streamlit_secret(name)
     return value.strip() if value is not None else default
 
 

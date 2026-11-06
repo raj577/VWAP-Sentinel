@@ -321,13 +321,47 @@ The suite uses synthetic candles only and covers:
 - preset JSON round-trip, overwrite, delete, invalid files and invalid values;
 - FYERS auth-error detection, rate-limit retry and invalid-symbol fast failure.
 
+## Streamlit Community Cloud
+
+The app deploys unchanged to [share.streamlit.io](https://share.streamlit.io):
+`app.py` is the entry point, `requirements.txt` installs dependencies and
+`runtime.txt` pins Python 3.12.
+
+1. Sign in at share.streamlit.io with GitHub and choose **Create app**.
+2. Repository `raj577/VWAP-Sentinel`, branch `main`, main file `app.py`.
+3. Under **Advanced settings -> Secrets**, paste (TOML):
+
+   ```toml
+   FYERS_CLIENT_ID = "your-client-id"
+   FYERS_SECRET_KEY = "your-secret-key"
+   FYERS_REDIRECT_URI = "https://<your-app>.streamlit.app"
+   FYERS_TOKEN_FILE = "data/access_token.txt"
+   FYERS_TOKEN_META_FILE = "data/token_meta.json"
+   FYERS_CACHE_DIR = "data/cache"
+   FYERS_LOG_DIR = "data/logs"
+   FYERS_PRESETS_FILE = "data/presets.json"
+   ```
+
+   Secrets are read with `st.secrets` when the matching environment variable
+   is absent (`config.py`). Relative paths resolve against the repository root.
+4. Register `https://<your-app>.streamlit.app` as the redirect URI in the FYERS
+   API dashboard, then deploy and log in through the app.
+
+Cloud containers are ephemeral: the token, cache and presets disappear on
+reboot, so log in again afterwards. Community Cloud apps are public and one
+stored token serves every visitor - deploy it for personal use or add a
+password gate before sharing the URL.
+
 ## Hugging Face Space (Gradio)
 
-The repository ships two front ends that share the same scanner code:
+The repository ships two entry points that share the same scanner code:
 
-- `app.py` - Streamlit, for local use (`streamlit run app.py`, port 8501).
-- `app_gradio.py` - Gradio, used by the Hugging Face Space
-  (`python app_gradio.py`, port 7860).
+- `app.py` - Streamlit, for local use (`streamlit run app.py`, port 8501) and
+  for Streamlit Community Cloud.
+- `app_gradio.py` - deployment shell for the Hugging Face Space
+  (`python app_gradio.py`, port 7860). Gradio starts internally only because
+  ZeroGPU requires a launched Gradio app; the Streamlit UI is reverse-proxied
+  at the site root over HTTP and WebSocket.
 
 The Space metadata lives in the YAML header above (`sdk: gradio`,
 `app_file: app_gradio.py`). To deploy:
