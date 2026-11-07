@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     scheduler_lock_key: int = 730_003
     worker_poll_seconds: int = 2
     scheduler_tick_seconds: int = 15
+    run_worker_inprocess: bool = False
+    run_scheduler_inprocess: bool = False
     job_heartbeat_timeout_seconds: int = 900
     scan_stale_warning_hours: int = 24
     market_holidays: str = ""

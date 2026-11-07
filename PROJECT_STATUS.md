@@ -519,3 +519,19 @@ Manual/remaining:
 - Push images to Docker Hub with real tags and deploy with
   `docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d`.
 - Old `postgres_data` volume is preserved; dev uses new `postgres_dev_data`.
+
+---
+
+## 22. Free PaaS deployment (Vercel + Render + Neon)
+
+- [x] Optional in-process worker and scheduler (`RUN_WORKER_INPROCESS`,
+      `RUN_SCHEDULER_INPROCESS`) started via FastAPI lifespan
+- [x] `render.yaml` free Docker web service with Alembic-on-boot, health check,
+      current-expiry ingestion, SSL and small Neon pools
+- [x] Vercel frontend configuration documented
+- [x] Keep-alive instructions for Render free sleep and 56-minute scheduler
+- [x] No Redis requirement on the free plan (in-memory rate limits)
+- [x] Tests: 139 passed, 1 skipped
+
+Manual: create Render/Vercel services, set secrets, register FYERS callback,
+bootstrap SUPER_ADMIN and add a keep-alive monitor.

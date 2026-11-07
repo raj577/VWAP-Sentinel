@@ -1,0 +1,70 @@
+services:
+  - type: web
+    name: vwap-sentinel-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerContext: .
+    dockerfilePath: ./backend/Dockerfile
+    dockerCommand: >-
+      sh -c "python -m alembic upgrade head && python -m uvicorn
+      backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+    healthCheckPath: /api/v1/health/live
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: RUN_WORKER_INPROCESS
+        value: "true"
+      - key: RUN_SCHEDULER_INPROCESS
+        value: "true"
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: INGEST_CURRENT_EXPIRY_ONLY
+        value: "true"
+      - key: DATABASE_REQUIRE_SSL
+        value: "true"
+      - key: DB_POOL_SIZE
+        value: "1"
+      - key: DB_MAX_OVERFLOW
+        value: "1"
+      - key: DB_POOL_TIMEOUT
+        value: "30"
+      - key: DB_POOL_RECYCLE
+        value: "1800"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: AUTH_DEV_EXPOSE_TOKENS
+        value: "false"
+      - key: DATABASE_URL
+        sync: false
+      - key: NEON_DB_PASSWORD
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FYERS_CLIENT_ID
+        sync: false
+      - key: FYERS_SECRET_KEY
+        sync: false
+      - key: FYERS_REDIRECT_URI
+        sync: false
+      - key: FYERS_BACKEND_REDIRECT_URI
+        sync: false
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

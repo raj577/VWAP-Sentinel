@@ -8,6 +8,7 @@ Run locally:
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,11 +17,23 @@ from backend import __version__
 from backend.api.v1.router import api_router
 from backend.core.config import get_settings
 from backend.core.logging import configure_logging
+from backend.services.background import (
+    start_background_runtime,
+    stop_background_runtime,
+)
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        start_background_runtime()
+        try:
+            yield
+        finally:
+            stop_background_runtime()
 
     app = FastAPI(
         title=settings.app_name,
@@ -28,6 +41,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url=f"{settings.api_v1_prefix}/openapi.json",
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,

@@ -1012,6 +1012,99 @@ ports; Redis and the database remain internal/remote.
   old `postgres_data` volume is retained; the dev stack uses a new
   `postgres_dev_data` volume with the requested `scanner` credentials.
 
+## Free deployment: Vercel + Render + Neon (single backend service)
+
+Vercel cannot run FastAPI, the worker or the scheduler. This free setup keeps
+the Next.js app on Vercel and runs the backend as one Render free web service
+with the worker and scheduler loops inside the API process.
+
+```
+Vercel (Next.js)  ->  Render free service (FastAPI + in-process worker/scheduler)
+                              -> Neon PostgreSQL
+                              -> in-memory rate limits (no Redis required)
+```
+
+`render.yaml` defines the Render service. The startup command runs Alembic once
+per boot, then Uvicorn on `$PORT`.
+
+### Render backend
+
+1. Render Dashboard -> **New** -> **Blueprint** -> connect this repository.
+   Render reads `render.yaml` and creates `vwap-sentinel-api` (`plan: free`,
+   Docker, `/api/v1/health/live` health check).
+2. Set the secret environment variables marked `sync: false`:
+
+   ```env
+   DATABASE_URL=postgresql+psycopg://neondb_owner:${NEON_DB_PASSWORD}@ep-snowy-thunder-beeb113s-pooler.c-9.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+   NEON_DB_PASSWORD=<neon-password>
+   ADMIN_API_KEY=<long-random-service-key>
+   AUTH_SECRET_KEY=<long-random-secret>
+   APP_BASE_URL=https://<vercel-app>.vercel.app
+   CORS_ORIGINS=https://<vercel-app>.vercel.app
+   FYERS_CLIENT_ID=<...>
+   FYERS_SECRET_KEY=<...>
+   FYERS_REDIRECT_URI=https://<render-service>.onrender.com/api/v1/fyers/callback
+   FYERS_BACKEND_REDIRECT_URI=https://<render-service>.onrender.com/api/v1/fyers/callback
+   EMAIL_PROVIDER=smtp
+   SMTP_HOST=<...>
+   SMTP_PORT=587
+   SMTP_USERNAME=<...>
+   SMTP_PASSWORD=<...>
+   EMAIL_FROM=no-reply@<your-domain>
+   ```
+
+   `RUN_WORKER_INPROCESS=true` and `RUN_SCHEDULER_INPROCESS=true` are already
+   set in `render.yaml`. Without SMTP you can temporarily set
+   `AUTH_DEV_EXPOSE_TOKENS=true` for testing, but disable it before real users.
+
+3. Deploy. The service URL is `https://<render-service>.onrender.com`.
+4. Create the first admin from the Render shell (or locally against Neon):
+
+   ```powershell
+   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec api `
+     python -m backend.cli.bootstrap_admin `
+     --email "admin@yourdomain.com" --password "Use-A-Strong!Passphrase123"
+   ```
+
+### Vercel frontend
+
+1. Vercel -> **Add New Project** -> import the repository.
+2. **Root Directory:** `frontend`; Framework: Next.js.
+3. Environment variables:
+
+   ```env
+   NEXT_PUBLIC_API_BASE_URL=https://<render-service>.onrender.com/api/v1
+   API_INTERNAL_URL=https://<render-service>.onrender.com/api/v1
+   ADMIN_API_KEY=<same service key as Render>
+   FYERS_BACKEND_REDIRECT_URI=https://<render-service>.onrender.com/api/v1/fyers/callback
+   ```
+
+4. Deploy, then update Render `APP_BASE_URL` / `CORS_ORIGINS` to the final
+   Vercel URL and restart the Render service.
+5. Register the Render FYERS callback URL in the FYERS API dashboard.
+
+### Keep-alive and scheduler
+
+Render free services sleep after ~15 minutes without traffic, which would stop
+the in-process scheduler. Create a free monitor (UptimeRobot or cron-job.org)
+that requests:
+
+```
+https://<render-service>.onrender.com/api/v1/health/live
+```
+
+every 5–10 minutes. This keeps the service (and the 56-minute scheduler) alive.
+Free Render hours are limited to 750/month, which is enough for one service.
+
+### Caveats
+
+- Free backend memory is 512 MB; current-expiry-only ingestion is enabled to
+  keep runs small. Avoid triggering a manual scan and a manual refresh together.
+- No Redis on this plan: rate limits use the in-process fallback, and pipeline
+  locking uses PostgreSQL advisory locks.
+- Neon autosuspends when idle; the first request after a pause is slower.
+- The first Render request after a deploy/cold start is slow.
+
 ### Known limitations
 
 - FYERS access tokens expire daily; refresh them from the admin panel
