@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Any
+from urllib.parse import quote
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +25,10 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "VWAP Sentinel API"
-    environment: str = "development"
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV"),
+    )
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
@@ -33,6 +37,13 @@ class Settings(BaseSettings):
         description="SQLAlchemy URL. PostgreSQL is required outside tests.",
     )
     database_echo: bool = False
+    # Neon resolves this placeholder at runtime; never log the resolved URL.
+    neon_db_password: str = ""
+    db_pool_size: int = 5
+    db_max_overflow: int = 2
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 1800
+    database_require_ssl: bool = False
 
     redis_url: str = "redis://localhost:6379/0"
     timezone: str = "Asia/Kolkata"
@@ -78,6 +89,7 @@ class Settings(BaseSettings):
     # admin market-data diagnostics entirely.
     admin_api_key: str = ""
     market_data_timeframe: str = "60"
+    ingest_current_expiry_only: bool = False
     candle_upsert_batch_size: int = 500
     ingestion_lock_key: int = 730_001
     scan_lock_key: int = 730_002
@@ -90,7 +102,22 @@ class Settings(BaseSettings):
     frontend_base_url: str = "http://localhost:3000"
     fyers_login_state_ttl_seconds: int = 600
 
+    @model_validator(mode="after")
+    def _resolve_database_url(self):
+        placeholders = ("$${NEON_DB_PASSWORD}", "${NEON_DB_PASSWORD}")
+        if any(token in self.database_url for token in placeholders):
+            if not self.neon_db_password:
+                raise ValueError(
+                    "NEON_DB_PASSWORD is required when DATABASE_URL uses "
+                    "${NEON_DB_PASSWORD}."
+                )
+            encoded = quote(self.neon_db_password, safe="")
+            for token in placeholders:
+                self.database_url = self.database_url.replace(token, encoded)
+        return self
+
     @field_validator("scheduler_interval_minutes")
+
     @classmethod
     def _positive_interval(cls, value: int) -> int:
         if value < 1:

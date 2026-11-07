@@ -237,7 +237,7 @@ class MarketDataIngestionService:
         active = select_active_futures(
             master,
             as_of=today,
-            current_expiry_only=False,
+            current_expiry_only=self.settings.ingest_current_expiry_only,
             include_index=False,
         )
         if active is None or active.empty:
@@ -511,6 +511,9 @@ class MarketDataIngestionService:
                     {"key": self.settings.ingestion_lock_key},
                 ).scalar()
             )
+            if acquired:
+                # End the transaction; the session-level lock stays held.
+                connection.commit()
         except Exception:
             connection.close()
             raise
@@ -529,8 +532,14 @@ class MarketDataIngestionService:
                 text("SELECT pg_advisory_unlock(:key)"),
                 {"key": self.settings.ingestion_lock_key},
             )
+            self._lock_connection.commit()
+        except Exception:
+            logger.warning("Could not release ingestion advisory lock", exc_info=True)
         finally:
-            self._lock_connection.close()
+            try:
+                self._lock_connection.close()
+            except Exception:
+                pass
             self._lock_connection = None
 
     # -------------------------------------------------------------- helpers

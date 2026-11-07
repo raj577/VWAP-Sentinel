@@ -488,3 +488,34 @@ Limitations:
   separate `(customer)`/`(admin)` groups.
 - No automated browser/E2E tests; verification used HTTP/build checks.
 - Missing modules render integration placeholders listing required endpoints.
+
+---
+
+## 21. Docker development and Neon production configuration
+
+- [x] Compose split: `compose.yaml`, `compose.dev.yaml`, `compose.prod.yaml`
+- [x] Dev PostgreSQL (`scanner`/`local_dev_password`/`avwap_scanner`) on a
+      dedicated `postgres_dev_data` volume, Redis, API hot reload, Next dev
+- [x] Production overlay: Neon via `.env.production`, no PostgreSQL container,
+      redis internal, restart policies, health checks, small pools
+- [x] Runtime Neon placeholder resolution with URL-encoded password
+      (`${NEON_DB_PASSWORD}` and escaped Compose `$${...}`)
+- [x] Pool/SSL settings: `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`,
+      `DB_POOL_RECYCLE`, `DATABASE_REQUIRE_SSL`
+- [x] `APP_ENV` alias for environment selection
+- [x] Frontend Dockerfile dev target; migration stays a one-shot service
+- [x] Env examples: `.env.example`, `.env.development.example`,
+      `.env.production.example`; `.gitignore` exceptions
+- [x] Existing local data migrated into Docker dev DB via pg_dump/restore
+      (652 instruments, 117,425 candles, 2 users, 15 scans)
+- [x] Dev verification: health 200, Alembic head, customer login/pages, manual
+      scan job completed by worker, no password in logs
+- [x] Production images built; Neon target/SSL/pool resolution verified without
+      connecting (password not available to the agent)
+- [x] Tests: 140 passed
+
+Manual/remaining:
+- Set the real `NEON_DB_PASSWORD` and public URLs in `.env.production`.
+- Push images to Docker Hub with real tags and deploy with
+  `docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d`.
+- Old `postgres_data` volume is preserved; dev uses new `postgres_dev_data`.

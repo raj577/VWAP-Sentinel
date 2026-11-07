@@ -1,0 +1,124 @@
+name: fyers-avwap-scanner
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ${BACKEND_IMAGE:-fyers-avwap-scanner-backend:local}
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    volumes:
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ${BACKEND_IMAGE:-fyers-avwap-scanner-backend:local}
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "backend.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ${BACKEND_IMAGE:-fyers-avwap-scanner-backend:local}
+    command: ["python", "-m", "backend.worker_main"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ${BACKEND_IMAGE:-fyers-avwap-scanner-backend:local}
+    command: ["python", "-m", "backend.scheduler_main"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8000/api/v1}
+    image: ${WEB_IMAGE:-fyers-avwap-scanner-web:local}
+    environment:
+      API_INTERNAL_URL: http://api:8000/api/v1
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_dev_data:
+  redis_data:
+  backend_data:
+  backend_logs:
+  web_node_modules:

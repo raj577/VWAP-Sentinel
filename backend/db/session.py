@@ -19,14 +19,19 @@ _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
 
 
-def _engine_kwargs(url: str) -> dict[str, Any]:
+def _engine_kwargs(url: str, settings) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        kwargs["pool_size"] = 5
-        kwargs["max_overflow"] = 5
-        kwargs["connect_args"] = {"connect_timeout": 5}
+        kwargs["pool_size"] = max(int(settings.db_pool_size), 1)
+        kwargs["max_overflow"] = max(int(settings.db_max_overflow), 0)
+        kwargs["pool_timeout"] = max(int(settings.db_pool_timeout), 1)
+        kwargs["pool_recycle"] = max(int(settings.db_pool_recycle), 1)
+        connect_args: dict[str, Any] = {"connect_timeout": 5}
+        if settings.database_require_ssl and "sslmode=" not in url:
+            connect_args["sslmode"] = "require"
+        kwargs["connect_args"] = connect_args
     return kwargs
 
 
@@ -37,7 +42,7 @@ def get_engine() -> Engine:
         _engine = create_engine(
             settings.database_url,
             echo=settings.database_echo,
-            **_engine_kwargs(settings.database_url),
+            **_engine_kwargs(settings.database_url, settings),
         )
     return _engine
 

@@ -354,6 +354,8 @@ class ScannerService:
                     {"key": self.settings.scan_lock_key},
                 ).scalar()
             )
+            if acquired:
+                connection.commit()
         except Exception:
             connection.close()
             raise
@@ -371,6 +373,12 @@ class ScannerService:
                 text("SELECT pg_advisory_unlock(:key)"),
                 {"key": self.settings.scan_lock_key},
             )
+            self._lock_connection.commit()
+        except Exception:
+            logger.warning("Could not release scan advisory lock", exc_info=True)
         finally:
-            self._lock_connection.close()
+            try:
+                self._lock_connection.close()
+            except Exception:
+                pass
             self._lock_connection = None

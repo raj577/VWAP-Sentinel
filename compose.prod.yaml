@@ -1,0 +1,52 @@
+services:
+  redis:
+    restart: unless-stopped
+
+  migrate:
+    env_file:
+      - .env.production
+    restart: "no"
+
+  api:
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      DATABASE_REQUIRE_SSL: "true"
+      DB_POOL_SIZE: "3"
+      DB_MAX_OVERFLOW: "2"
+      DB_POOL_TIMEOUT: "30"
+      DB_POOL_RECYCLE: "1800"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  worker:
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      DATABASE_REQUIRE_SSL: "true"
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "1"
+    restart: unless-stopped
+
+  scheduler:
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      DATABASE_REQUIRE_SSL: "true"
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "1"
+    restart: unless-stopped
+
+  web:
+    environment:
+      API_INTERNAL_URL: http://api:8000/api/v1
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      FYERS_BACKEND_REDIRECT_URI: ${FYERS_BACKEND_REDIRECT_URI}
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

@@ -457,12 +457,15 @@ FYERS API (owner token, server-side only)
 ### Backend setup
 
 ```powershell
-.\.venv-backend\Scripts\python.exe -m pip install -r requirements-backend.txt
-docker compose up -d postgres redis
-$env:DATABASE_URL="postgresql+psycopg://avwap:avwap@127.0.0.1:5432/avwap"
-.\.venv-backend\Scripts\python.exe -m alembic upgrade head
-.\scripts\run_api.cmd
+# Docker development stack (PostgreSQL + Redis + API + worker + scheduler + web)
+Copy-Item .env.development.example .env.development   # fill FYERS credentials
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose -f compose.yaml -f compose.dev.yaml ps
+docker compose -f compose.yaml -f compose.dev.yaml exec api alembic upgrade head
 ```
+
+Local virtualenv scripts (without Docker) are still available via
+`scripts\run_api.cmd`, `run_worker.cmd`, `run_scheduler.cmd`, `run_web.cmd`.
 
 Environment variables (see `.env.example`):
 
@@ -797,8 +800,17 @@ The command refuses to create a second SUPER_ADMIN and records an audit event.
 Docker equivalent:
 
 ```powershell
-docker compose up -d --build
-docker compose exec backend python -m backend.cli.bootstrap_admin `
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose -f compose.yaml -f compose.dev.yaml exec api `
+  python -m backend.cli.bootstrap_admin `
+  --email "admin@yourdomain.com" --password "Use-A-Strong!Passphrase123"
+```
+
+Production (after the Neon `.env.production` exists):
+
+```powershell
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec api `
+  python -m backend.cli.bootstrap_admin `
   --email "admin@yourdomain.com" --password "Use-A-Strong!Passphrase123"
 ```
 
@@ -851,12 +863,12 @@ Local commands (scheduled tasks already run these):
 .\scripts\run_web.cmd
 ```
 
-Docker (all services, images built):
+Docker development:
 
 ```powershell
 # stop the local Windows tasks first if ports 3000/8000/5432 are in use
-docker compose up -d --build
-docker compose ps
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose -f compose.yaml -f compose.dev.yaml ps
 ```
 
 Environment variables (new in Phase 4):
@@ -896,6 +908,109 @@ prevents overlapping scans (second request gets HTTP 409).
 curl.exe -X POST -H "X-Admin-Key: dev-admin-key" "http://localhost:8000/api/v1/admin/scans/run"
 curl.exe -H "X-Admin-Key: dev-admin-key" "http://localhost:8000/api/v1/admin/scans/latest"
 ```
+
+## Docker development and Neon PostgreSQL production
+
+Compose files:
+
+- `compose.yaml` - shared service definitions (Redis, migrate, API, worker,
+  scheduler, web). No database ports, no local PostgreSQL.
+- `compose.dev.yaml` - local PostgreSQL (`scanner` / `local_dev_password` /
+  `avwap_scanner`), published ports, bind mounts and hot reload.
+- `compose.prod.yaml` - Neon database through `.env.production`, no PostgreSQL
+  container, restart policies, SSL and smaller pools.
+
+### Local development
+
+```powershell
+Copy-Item .env.development.example .env.development   # fill FYERS credentials
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose -f compose.yaml -f compose.dev.yaml ps
+docker compose -f compose.yaml -f compose.dev.yaml exec api alembic upgrade head
+docker compose -f compose.yaml -f compose.dev.yaml logs -f api
+docker compose -f compose.yaml -f compose.dev.yaml down   # keeps volumes
+```
+
+URLs: API `http://localhost:8000/docs`, web `http://localhost:3000`,
+PostgreSQL `localhost:5432`, Redis `localhost:6379`.
+
+Source bind mounts keep `backend/`, `migrations/`, `config.py`, `login.py`,
+`indicators/` and `scanner/` live-reloaded by uvicorn; the web container runs
+`next dev` with the frontend mounted. Worker and scheduler pick up code changes
+after a container restart.
+
+### Neon production
+
+1. Copy the template and keep it out of git:
+
+   ```powershell
+   Copy-Item .env.production.example .env.production
+   ```
+
+2. Set `NEON_DB_PASSWORD` using a secret manager or CI secret. Do not paste it
+   into chat, source files, Dockerfiles or committed env files. Keep the
+   `DATABASE_URL` template from the example:
+   `.../${NEON_DB_PASSWORD}@<neon-pooler-host>/neondb?sslmode=require&channel_binding=require`
+   (the example uses `$${NEON_DB_PASSWORD}` so Compose leaves the placeholder
+   intact; the backend accepts either form).
+3. Set the public API/web URLs, FYERS credentials, auth secrets and image names
+   in `.env.production`.
+4. Build and publish images:
+
+   ```powershell
+   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml build api web
+   docker push <dockerhub-user>/fyers-avwap-scanner-backend:latest
+   docker push <dockerhub-user>/fyers-avwap-scanner-web:latest
+   ```
+
+5. Run migrations once, then start services:
+
+   ```powershell
+   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml run --rm migrate
+   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d
+   ```
+
+6. Verify:
+
+   ```powershell
+   curl.exe http://localhost:8000/api/v1/health/ready
+   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec api `
+     python -c "from backend.db.session import get_engine; from sqlalchemy import text; print(get_engine().connect().execute(text('select 1')).scalar())"
+   ```
+
+The backend resolves `${NEON_DB_PASSWORD}` at runtime and URL-encodes the
+password, so reserved characters (`@`, `:`, `/`, `?`, `#`) are safe. The
+resolved URL is never logged. Pool sizes default to 3/2 in production for Neon
+pooled connections and 5/2 in development.
+
+Production does not include a PostgreSQL container and exposes only API/web
+ports; Redis and the database remain internal/remote.
+
+### Docker verification performed
+
+- Dev stack healthy: PostgreSQL, Redis, API, worker, scheduler, web.
+- `/api/v1/health/ready` returns 200 against Docker PostgreSQL.
+- Alembic at `0006_auth (head)`; existing local data preserved via dump/restore
+  into the new `avwap_scanner` database (652 instruments, 117,425 candles,
+  2 users, 15 scans).
+- Customer login and dashboard/scanner/history pages 200.
+- Manual scan job queued and completed by the worker (scan run created).
+- No database password appears in api/worker/scheduler logs.
+- Production images build and resolve the Neon host, `sslmode=require`,
+  `channel_binding=require` and pool settings. A live Neon connection was not
+  attempted because the password is intentionally not available to the agent.
+
+### Configuration issues found
+
+- Local orphan API/Next processes can hold ports 3000/8000 and prevent Docker
+  port publishing. Stop the Windows tasks before starting Compose.
+- Compose interpolates `${NEON_DB_PASSWORD}` inside env files in some versions;
+  the example escapes it as `$${...}` and the backend resolves both forms.
+- The SSL flag used `DATABASE_REQUIRE_SSL`; the settings field was renamed to
+  match. SSL is also enforced by the Neon URL itself.
+- The old `docker-compose.yml` was replaced by `compose.yaml` + overlays. The
+  old `postgres_data` volume is retained; the dev stack uses a new
+  `postgres_dev_data` volume with the requested `scanner` credentials.
 
 ### Known limitations
 

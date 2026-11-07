@@ -447,3 +447,14 @@ overview, scanner with filters/sorting/search/pagination, match detail,
 chart alias, history list/detail, profile/security and clearly marked
 unavailable modules (watchlist, strategies, subscription, billing). A `q`
 search filter was added to the instruments API.
+
+### Deployment configuration - Docker development and Neon production
+
+Added `compose.yaml` with shared services, `compose.dev.yaml` (local PostgreSQL,
+published ports, bind mounts, hot reload, Next dev) and `compose.prod.yaml`
+(Neon DATABASE_URL from `.env.production`, no PostgreSQL container, restart
+policies, SSL and small pools). The backend resolves and URL-encodes
+`${NEON_DB_PASSWORD}` at runtime (supporting Compose-escaped `$${...}`), uses
+configurable pool/SSL settings, and Alembic reads the same environment-selected
+URL. Dev database was recreated with the requested `scanner` credentials and
+existing data restored; dev stack and production image builds were verified.

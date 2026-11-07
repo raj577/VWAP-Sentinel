@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vwap-postgres-dev
+    environment:
+      POSTGRES_USER: scanner
+      POSTGRES_PASSWORD: local_dev_password
+      POSTGRES_DB: avwap_scanner
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scanner -d avwap_scanner"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  migrate:
+    env_file:
+      - .env.development
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://scanner:local_dev_password@postgres:5432/avwap_scanner
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    env_file:
+      - .env.development
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://scanner:local_dev_password@postgres:5432/avwap_scanner
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "backend.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+      - ./config.py:/app/config.py
+      - ./login.py:/app/login.py
+      - ./indicators:/app/indicators
+      - ./scanner:/app/scanner
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+
+  worker:
+    env_file:
+      - .env.development
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://scanner:local_dev_password@postgres:5432/avwap_scanner
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+      - ./config.py:/app/config.py
+      - ./login.py:/app/login.py
+      - ./indicators:/app/indicators
+      - ./scanner:/app/scanner
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+
+  scheduler:
+    env_file:
+      - .env.development
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://scanner:local_dev_password@postgres:5432/avwap_scanner
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+      - ./config.py:/app/config.py
+      - ./login.py:/app/login.py
+      - ./indicators:/app/indicators
+      - ./scanner:/app/scanner
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+
+  web:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      API_INTERNAL_URL: http://api:8000/api/v1
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      FYERS_BACKEND_REDIRECT_URI: http://localhost:8000/api/v1/fyers/callback
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - web_node_modules:/app/node_modules

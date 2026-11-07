@@ -46,3 +46,7 @@ frontend/.env.local
 frontend/.env*.local
 frontend/next-env.d.ts
 frontend/tsconfig.tsbuildinfo
+
+# Environment-specific examples (never ignore these)
+!.env.development.example
+!.env.production.example
