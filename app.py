@@ -71,6 +71,8 @@ FILTER_DEFAULTS: dict[str, Any] = {
     "f_classes": list(PATTERN_TYPES),
     "f_close_above_avwap": False,
     "f_close_above_vwap": False,
+    "f_below_ref": "off",
+    "f_below_candle": "previous",
 }
 
 
@@ -338,6 +340,38 @@ def build_pattern_config() -> tuple[PatternConfig | None, str | None, str]:
         ),
     )
 
+    st.caption("Earlier candle confirmation")
+    below_reference = st.selectbox(
+        "Earlier candle closed below",
+        options=["off", "avwap", "vwap", "either"],
+        format_func=lambda value: {
+            "off": "Off",
+            "avwap": "AVWAP",
+            "vwap": "Session VWAP",
+            "either": "AVWAP or session VWAP",
+        }[value],
+        key="f_below_ref",
+        help=(
+            "Require an earlier candle to close strictly below the selected "
+            "line. 'AVWAP or session VWAP' accepts either one."
+        ),
+    )
+    below_candle = st.selectbox(
+        "Which earlier candle",
+        options=["previous", "second_previous", "either"],
+        format_func=lambda value: {
+            "previous": "Previous candle",
+            "second_previous": "Second previous candle",
+            "either": "Previous or second previous",
+        }[value],
+        key="f_below_candle",
+        disabled=below_reference == "off",
+        help=(
+            "Candles are counted backwards from the most recent completed "
+            "candle. 'Either' accepts whichever of the two is below."
+        ),
+    )
+
     classifications = st.multiselect(
         "Pattern classification filter",
         options=list(PATTERN_TYPES),
@@ -360,6 +394,8 @@ def build_pattern_config() -> tuple[PatternConfig | None, str | None, str]:
             allowed_patterns=tuple(classifications),
             require_close_above_avwap=require_close_above_avwap,
             require_close_above_vwap=require_close_above_vwap,
+            below_reference=below_reference,
+            below_candle=below_candle,
         )
     except ValueError as exc:
         return None, str(exc), ""
@@ -375,6 +411,21 @@ def build_pattern_config() -> tuple[PatternConfig | None, str | None, str]:
         summary += " · close > AVWAP"
     elif require_close_above_vwap:
         summary += " · close > VWAP"
+    if below_reference != "off":
+        reference_labels = {
+            "avwap": "AVWAP",
+            "vwap": "VWAP",
+            "either": "AVWAP/VWAP",
+        }
+        candle_labels = {
+            "previous": "prev close",
+            "second_previous": "2nd prev close",
+            "either": "prev/2nd prev close",
+        }
+        summary += (
+            f" · {candle_labels[below_candle]} < "
+            f"{reference_labels[below_reference]}"
+        )
     return config, None, summary
 
 

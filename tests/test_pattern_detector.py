@@ -199,3 +199,75 @@ def test_close_above_vwap_filter_requires_session_vwap_column():
     config = PatternConfig(require_close_above_vwap=True)
     with pytest.raises(ValueError):
         PatternDetector(config).detect(frame)
+
+def _flat_candle(close: float) -> dict[str, float]:
+    return {
+        "open": close,
+        "high": close + 0.10,
+        "low": close - 0.10,
+        "close": close,
+        "volume": 1000.0,
+    }
+
+
+def _below_frame(previous_close: float, second_close: float | None = None) -> pd.DataFrame:
+    candles: list[dict[str, float]] = []
+    if second_close is not None:
+        candles.append(_flat_candle(second_close))
+    candles.append(_flat_candle(previous_close))
+    candles.append(
+        {
+            "open": 100.05,
+            "high": 100.30,
+            "low": 99.90,
+            "close": 100.10,
+            "volume": 1000.0,
+        }
+    )
+    frame = add_indicators(make_frame(pattern_candles=candles))
+    frame["avwap"] = 100.0
+    frame["session_vwap"] = 100.0
+    return frame
+
+
+def test_below_previous_avwap_filter_accepts_and_rejects():
+    config = PatternConfig(below_reference="avwap", below_candle="previous")
+    assert PatternDetector(config).detect(_below_frame(99.80)) is not None
+    assert PatternDetector(config).detect(_below_frame(100.20)) is None
+    assert PatternDetector().detect(_below_frame(100.20)) is not None
+
+
+def test_below_second_previous_lookback_options():
+    frame = _below_frame(previous_close=100.20, second_close=99.80)
+    second = PatternConfig(below_reference="avwap", below_candle="second_previous")
+    previous = PatternConfig(below_reference="avwap", below_candle="previous")
+    either = PatternConfig(below_reference="avwap", below_candle="either")
+    assert PatternDetector(second).detect(frame) is not None
+    assert PatternDetector(previous).detect(frame) is None
+    assert PatternDetector(either).detect(frame) is not None
+
+
+def test_below_vwap_reference_distinguishes_lines():
+    frame = _below_frame(99.95)
+    frame["avwap"] = 99.90
+    frame["session_vwap"] = 100.0
+    vwap = PatternConfig(below_reference="vwap", below_candle="previous")
+    avwap = PatternConfig(below_reference="avwap", below_candle="previous")
+    either = PatternConfig(below_reference="either", below_candle="previous")
+    assert PatternDetector(vwap).detect(frame) is not None
+    assert PatternDetector(avwap).detect(frame) is None
+    assert PatternDetector(either).detect(frame) is not None
+
+
+def test_below_vwap_filter_requires_session_vwap_column():
+    frame = _below_frame(99.80).drop(columns=["session_vwap"])
+    config = PatternConfig(below_reference="vwap", below_candle="previous")
+    with pytest.raises(ValueError):
+        PatternDetector(config).detect(frame)
+
+
+def test_invalid_below_options_raise():
+    with pytest.raises(ValueError):
+        PatternConfig(below_reference="bogus")
+    with pytest.raises(ValueError):
+        PatternConfig(below_candle="bogus")

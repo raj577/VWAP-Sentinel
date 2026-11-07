@@ -83,6 +83,9 @@ class PatternDetector:
         if not self._passes_close_filters(frame, float(avwap.iloc[-1])):
             return None
 
+        if not self._passes_below_filters(frame):
+            return None
+
         metrics = compute_candle_metrics(frame)
         close = frame["close"].astype("float64")
         low = frame["low"].astype("float64")
@@ -224,6 +227,72 @@ class PatternDetector:
                 return False
 
         return True
+
+    def _passes_below_filters(self, frame: pd.DataFrame) -> bool:
+        """Check whether an earlier candle closed below AVWAP and/or VWAP.
+
+        ``below_candle`` selects the candle: the one before the last completed
+        candle, the one before that, or either. ``below_reference`` selects the
+        line: AVWAP, session VWAP, or either. A missing candle means the filter
+        cannot be satisfied.
+        """
+
+        config = self.config
+        if config.below_reference == "off":
+            return True
+
+        offsets = {
+            "previous": (-2,),
+            "second_previous": (-3,),
+            "either": (-2, -3),
+        }[config.below_candle]
+        if any(len(frame) + offset < 0 for offset in offsets):
+            return False
+
+        close = pd.to_numeric(frame["close"], errors="coerce")
+        avwap = pd.to_numeric(frame["avwap"], errors="coerce")
+
+        needs_vwap = config.below_reference in {"vwap", "either"}
+        if needs_vwap and "session_vwap" not in frame.columns:
+            raise ValueError(
+                "Pattern detection needs a 'session_vwap' column when a "
+                "session VWAP below filter is enabled"
+            )
+        vwap = (
+            pd.to_numeric(frame["session_vwap"], errors="coerce")
+            if needs_vwap
+            else None
+        )
+
+        for offset in offsets:
+            close_value = float(close.iloc[offset])
+            if not np.isfinite(close_value):
+                continue
+
+            avwap_value = float(avwap.iloc[offset])
+            below_avwap = (
+                np.isfinite(avwap_value)
+                and avwap_value > 0.0
+                and close_value < avwap_value
+            )
+
+            below_vwap = False
+            if vwap is not None:
+                vwap_value = float(vwap.iloc[offset])
+                below_vwap = (
+                    np.isfinite(vwap_value)
+                    and vwap_value > 0.0
+                    and close_value < vwap_value
+                )
+
+            if config.below_reference == "avwap" and below_avwap:
+                return True
+            if config.below_reference == "vwap" and below_vwap:
+                return True
+            if config.below_reference == "either" and (below_avwap or below_vwap):
+                return True
+
+        return False
 
     def _classify(
         self,

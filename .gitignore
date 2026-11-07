@@ -30,3 +30,19 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local backend scratch databases
+.tmp/
+*.db
+*.sqlite3
+
+# Backend virtual environments
+.venv-backend/
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/.env*.local
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo

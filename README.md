@@ -434,3 +434,497 @@ application stops at the login screen rather than substituting fake data.
   application's control.
 - Use a dedicated local machine/environment for token storage and never commit
   credentials.
+
+## SaaS backend (Phases 1-2)
+
+A FastAPI service backs the multi-user SaaS platform. The legacy Streamlit app
+above stays runnable until the Next.js client reaches parity.
+
+```
+FYERS API (owner token, server-side only)
+  -> ingestion service (backend/services/ingestion.py)
+  -> PostgreSQL (instruments, market_candles, ingestion_jobs)
+  -> FastAPI /api/v1
+  -> Next.js (frontend/) and future Flutter
+```
+
+### Prerequisites
+
+- Docker Desktop (PostgreSQL 16 + Redis 7)
+- Python 3.11+
+- Node.js 20+ (for the web app)
+
+### Backend setup
+
+```powershell
+.\.venv-backend\Scripts\python.exe -m pip install -r requirements-backend.txt
+docker compose up -d postgres redis
+$env:DATABASE_URL="postgresql+psycopg://avwap:avwap@127.0.0.1:5432/avwap"
+.\.venv-backend\Scripts\python.exe -m alembic upgrade head
+.\scripts\run_api.cmd
+```
+
+Environment variables (see `.env.example`):
+
+```
+DATABASE_URL, DATABASE_ECHO, REDIS_URL, ENVIRONMENT, LOG_LEVEL
+CORS_ORIGINS, SCHEDULER_INTERVAL_MINUTES
+ADMIN_API_KEY, MARKET_DATA_TIMEFRAME
+FYERS_BACKEND_REDIRECT_URI, FRONTEND_BASE_URL, FYERS_LOGIN_STATE_TTL
+
+FYERS_CLIENT_ID, FYERS_SECRET_KEY, FYERS_REDIRECT_URI
+FYERS_TOKEN_FILE, FYERS_TOKEN_META_FILE
+```
+
+FYERS credentials and the access token are read by the backend through the
+existing `config.py` / `login.py` integration. They are never returned by an
+API. Customers never authenticate with FYERS.
+
+### Market data ingestion
+
+```powershell
+.\scripts\ingest.cmd
+# or
+.\.venv-backend\Scripts\python.exe -m backend.cli.ingest --triggered-by cli
+```
+
+The job verifies the FYERS token, discovers active NSE stock futures, fetches
+1-hour candles, upserts them (unique on instrument + timeframe + timestamp),
+records per-instrument results and stores job counters. Expired contracts and
+index futures are excluded. Different expiries are separate instruments, so
+contract-start AVWAP never mixes them.
+
+### Owner FYERS re-login (admin panel)
+
+The platform owner refreshes FYERS from the admin panel; customers never log in
+to FYERS.
+
+1. Register `FYERS_BACKEND_REDIRECT_URI` (default
+   `http://localhost:8000/api/v1/fyers/callback`) in the FYERS API dashboard.
+2. Open `http://localhost:3000/admin` and click **Connect / Re-login FYERS**.
+3. Complete the FYERS login. FYERS redirects to the backend callback, which
+   validates the HMAC-signed OAuth state, exchanges the code and stores the
+   token server-side with the same `TokenStore` as the Streamlit app.
+4. The callback page redirects back to the admin panel, which shows
+   `CONNECTED`; ingestion can now run.
+
+The login URL endpoint requires the admin key, and the callback is protected by
+a short-lived signed state (10 minutes by default). The token itself is never
+returned by any API. The legacy Streamlit re-login still works, but is no longer
+required for the SaaS.
+
+### API overview
+
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/health/live` | process liveness |
+| GET | `/api/v1/health/ready` | database readiness |
+| GET | `/api/v1/market-data/status` | FYERS status, counts, last job |
+| GET | `/api/v1/market-data/instruments` | paginated futures list |
+| GET | `/api/v1/market-data/instruments/{symbol}` | one contract |
+| GET | `/api/v1/market-data/candles/{symbol}` | stored candles |
+| GET | `/api/v1/market-data/avwap/{symbol}` | AVWAP / session VWAP series |
+| GET | `/api/v1/admin/market-data/jobs` | job history (admin key) |
+| GET | `/api/v1/admin/market-data/jobs/{id}` | job + instrument results |
+| GET | `/api/v1/admin/market-data/ingestion-summary` | aggregate health |
+| POST | `/api/v1/admin/scans/run` | run the scanner now (admin key) |
+| GET | `/api/v1/admin/scans` | scan run history |
+| GET | `/api/v1/admin/scans/latest` | latest completed scan with results |
+| GET | `/api/v1/admin/scans/{id}` | one immutable scan snapshot |
+| GET | `/api/v1/scanner/current` | latest completed scan with results |
+| GET | `/api/v1/scanner/history` | paginated history with filters |
+| GET | `/api/v1/scanner/history/{id}` | one historical scan |
+| GET | `/api/v1/scanner/results/{id}` | result plus preserved candles |
+| GET | `/api/v1/scanner/chart/{symbol}` | chart-ready AVWAP/VWAP series |
+| GET | `/api/v1/scanner/comparison` | two-run symbol comparison |
+| GET | `/api/v1/scanner/symbols/{symbol}/appearances` | first/latest appearance |
+| GET | `/api/v1/admin/scheduler/status` | scheduler + data status |
+| GET/PATCH | `/api/v1/admin/scheduler/settings` | read/update interval, hours, holidays |
+| POST | `/api/v1/admin/scheduler/pause` | pause automatic runs |
+| POST | `/api/v1/admin/scheduler/resume` | resume automatic runs |
+| POST | `/api/v1/admin/pipeline/refresh` | queue ingestion + scan (manual) |
+| POST | `/api/v1/admin/pipeline/run-scanner` | queue a scan only |
+| POST | `/api/v1/admin/pipeline/jobs/{id}/cancel` | cooperative cancellation |
+| GET | `/api/v1/admin/pipeline/jobs` | job history with filters |
+| GET | `/api/v1/admin/pipeline/jobs/{id}` | one job |
+| GET | `/api/v1/admin/pipeline/jobs/{id}/logs` | per-instrument logs |
+| GET | `/api/v1/admin/pipeline/summary` | pipeline health counts |
+| POST | `/api/v1/auth/register` | create a customer account |
+| POST | `/api/v1/auth/login` | JWT + refresh cookies/tokens |
+| POST | `/api/v1/auth/refresh` | rotate refresh token |
+| POST | `/api/v1/auth/logout` / `logout-all` | revoke one/all sessions |
+| GET/DELETE | `/api/v1/auth/sessions[/{id}]` | list/revoke sessions |
+| POST | `/api/v1/auth/verify-email` / `resend-verification` | email verification |
+| POST | `/api/v1/auth/forgot-password` / `reset-password` | password reset |
+| POST | `/api/v1/auth/change-password` | authenticated password change |
+| GET/PATCH | `/api/v1/auth/me` | profile |
+| GET | `/api/v1/admin/users` | user search/filter/sort |
+| PATCH | `/api/v1/admin/users/{id}/status` / `role` | suspend/role change |
+| POST | `/api/v1/admin/users/{id}/revoke-sessions` | revoke user sessions |
+| GET | `/api/v1/admin/audit-logs` | SUPER_ADMIN audit view |
+| GET | `/api/v1/admin/fyers/login-url` | start owner FYERS login (admin key) |
+| GET | `/api/v1/fyers/callback` | FYERS OAuth callback (public) |
+
+
+Example:
+
+```powershell
+curl.exe "http://localhost:8000/api/v1/market-data/status"
+curl.exe "http://localhost:8000/api/v1/market-data/instruments?page=1&page_size=5&active=true"
+curl.exe "http://localhost:8000/api/v1/market-data/avwap/NSE:RELIANCE26NOVFUT?limit=50"
+curl.exe -H "X-Admin-Key: dev-admin-key" "http://localhost:8000/api/v1/admin/market-data/jobs"
+```
+
+Sample status response:
+
+```json
+{
+  "timeframe": "60",
+  "instruments_total": 219,
+  "instruments_active": 219,
+  "candles_total": 18240,
+  "latest_candle_at": "2026-11-07T09:15:00Z",
+  "fyers": {"status": "CONNECTED", "message": "FYERS connection is healthy."},
+  "last_job": {"id": 1, "status": "COMPLETED", "candles_inserted": 18240}
+}
+```
+
+Admin endpoints accept the interim `X-Admin-Key` header. An empty
+`ADMIN_API_KEY` disables them (503) rather than leaving them open. JWT roles
+replace this in Phase 5.
+
+### Next.js web app
+
+```powershell
+cd frontend
+npm install
+npm run build
+npm run start      # http://localhost:3000 (or npm run dev)
+```
+
+`frontend/.env.local`:
+
+```
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+ADMIN_API_KEY=dev-admin-key
+```
+
+Only `NEXT_PUBLIC_*` values reach the browser. The admin key is read by the
+Next.js server component and is never shipped to the client. The app shell
+includes sidebar navigation, dashboard metrics, active contracts, an API health
+indicator and an admin ingestion table. Login, scan history and subscriptions
+are placeholders until their phases land.
+
+### Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+PostgreSQL upsert integration check (optional, against the Docker database):
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql+psycopg://avwap:avwap@127.0.0.1:5432/avwap"
+.\.venv\Scripts\python.exe -m pytest -q tests\test_postgres_integration.py
+```
+
+### Landing page and customer scans
+
+The public product landing page is `/` (hero, features, workflow, scanner
+preview, strategy, pricing preview, FAQ, final CTA, footer). It links to
+`/login` and `/register`.
+
+Authenticated customer pages:
+
+- `/dashboard` - customer dashboard (market data status, counters, contracts).
+- `/current` - latest completed scan, counters and matching contracts.
+- `/scans` - paginated history with symbol/classification filters.
+- `/scans/{id}` - immutable snapshot, results and two-run comparison
+  (`?compare_to=<run_id>`).
+- `/chart/{symbol}` - 1-hour candlesticks with contract-start AVWAP (red),
+  session VWAP (blue), highlighted detected candles and pattern metadata.
+
+The API is the single source for both the web app and the future Flutter app:
+
+```powershell
+curl.exe "http://localhost:8000/api/v1/scanner/current"
+curl.exe "http://localhost:8000/api/v1/scanner/history?page=1&page_size=20&symbol=NSE:RELIANCE26NOVFUT"
+curl.exe "http://localhost:8000/api/v1/scanner/comparison?base_run_id=1&compare_run_id=2"
+curl.exe "http://localhost:8000/api/v1/scanner/chart/NSE:RELIANCE26NOVFUT?limit=240"
+```
+
+Scanner behaviour: reads PostgreSQL candles only, drops forming candles,
+skips expired/inactive contracts, reuses the contract-start AVWAP and pattern
+detector from the legacy app, and stores one immutable run per execution with
+the exact pattern-window OHLCV.
+
+### Admin and customer applications
+
+Both applications use one authenticated shell with role-aware navigation and
+backend-enforced authorization.
+
+Admin routes:
+
+```
+/admin                 operational overview (users, market data, scheduler, jobs, scan)
+/admin/market-data     FYERS status, coverage and instrument table
+/admin/scheduler       pause/resume, interval, refresh, run scanner
+/admin/jobs            pipeline jobs, polling, details and cancellation
+/admin/jobs/{id}       stage, counters and per-instrument logs
+/admin/scanner         active config version (publishing API pending)
+/admin/scan-history    immutable scan runs and links to snapshots
+/admin/users           search/filter users, suspend, roles, revoke sessions
+/admin/roles           role catalogue and permission descriptions
+/admin/plans|trials|entitlements|payments|feature-flags
+/admin/audit-logs      SUPER_ADMIN audit view (API available)
+/admin/settings        implemented scheduler/market-data settings
+```
+
+Customer routes:
+
+```
+/dashboard             overview, latest results, history, freshness
+/dashboard/scanner     filter/sort/search current scan results
+/dashboard/scanner/{symbol}  stored match fields and explanation
+/dashboard/chart/{symbol}    candlestick + AVWAP/VWAP chart
+/dashboard/history     immutable scan history
+/dashboard/history/{id}      snapshot detail and run comparison
+/dashboard/watchlist|strategies|subscription|billing  integration placeholders
+/dashboard/profile     profile
+/dashboard/security    sessions and password
+```
+
+Legacy paths redirect: `/current` → `/dashboard/scanner`, `/scans` →
+`/dashboard/history`, `/chart/{symbol}` → `/dashboard/chart/{symbol}`,
+`/admin/pipeline` → `/admin/scheduler`, `/admin/scans` → `/admin/scan-history`.
+
+Implemented with real APIs: market-data status/instruments (including a new
+`q` search filter), scanner current/history/chart, scheduler status and
+settings, pipeline jobs/logs/summary and actions, admin user management,
+audit logs, authentication and sessions.
+
+Backend APIs still missing (shown as explicit placeholders, never fake data):
+
+```
+plans, trials, entitlements, payments, feature flags
+watchlists, strategy guides, subscription/billing for customers
+scanner configuration publishing and admin role CRUD
+admin user session details, audit filtering/pagination
+```
+
+UI note: rather than duplicating route groups, the existing authenticated
+`(app)` group hosts both applications; the sidebar renders customer or admin
+sections based on the backend-returned roles. This keeps one guard and one
+middleware while keeping navigation distinct.
+
+### Landing page and login experience
+
+The public site (`/`) is a dark, premium fintech landing page with:
+
+- Sticky navbar (Features, How It Works, Strategies, Pricing) and mobile menu.
+- Hero with an illustrative candlestick/AVWAP dashboard preview.
+- Feature cards, three-step workflow, scanner result preview, strategy
+  methodology, comparison section, pricing preview and accessible FAQ.
+- Clear "illustrative preview, not live market data" labels and a risk
+  disclaimer in the footer.
+- Pricing cards intentionally show a **Coming Soon** state; no fake purchase
+  flow.
+
+`/login` is a two-column auth experience with branding, chart illustration,
+show/hide password, inline validation, generic credential errors and role-aware
+redirects (`CUSTOMER → /dashboard`, `ADMIN/SUPER_ADMIN → /admin`). Register,
+verify, forgot-password and reset-password pages share the same layout.
+
+Session renewal: `frontend/middleware.ts` detects a missing (expired) access
+cookie on protected routes, rotates it via `/auth/refresh` using the refresh and
+CSRF cookies, then re-requests the page. If rotation fails, cookies are cleared
+and the user is redirected to `/login`.
+
+Server-side rendering uses `API_INTERNAL_URL` (defaults to the public API URL)
+while the browser uses `NEXT_PUBLIC_API_BASE_URL`; this keeps Docker networking
+correct without exposing secrets.
+
+Metadata includes title, description, Open Graph and Twitter cards. Animations
+respect `prefers-reduced-motion`.
+
+### Authentication and users (Phase 5)
+
+Roles: `SUPER_ADMIN`, `ADMIN`, `CUSTOMER`. Authorization is enforced in FastAPI
+dependencies; the frontend guards only improve UX.
+
+- Registration creates a `PENDING_VERIFICATION` customer with the CUSTOMER role.
+- Passwords are hashed with Argon2id; the policy requires 10+ characters and
+  three of lowercase/uppercase/digit/symbol.
+- Email verification and password-reset tokens are stored only as SHA-256
+  hashes, single-use and expiring (24h / 30m).
+- Login returns a 15-minute access JWT and a 7-day opaque refresh token.
+  Refresh tokens are hashed, grouped in families and rotated on every refresh.
+  Reuse of a rotated token revokes the whole family.
+- Web clients use HTTP-only `access_token`/`refresh_token` cookies plus a
+  readable `csrf_token` cookie; state-changing cookie requests require the
+  `X-CSRF-Token` header. Mobile clients can use the Bearer tokens returned by
+  `/auth/login` and `/auth/refresh`.
+- Sessions are listed and revocable per device; `logout-all` revokes every
+  session for the user.
+- Rate limits apply to register, login, refresh, verification, resend and
+  password-reset endpoints (Redis when reachable, in-process fallback).
+- Audit events are written for registration, login, logout, verification,
+  password changes, role/status changes and session revocation. Only
+  SUPER_ADMIN can read `/admin/audit-logs`.
+- Scanner read APIs now require an authenticated, active account. Admin APIs
+  accept an administrator JWT or the server-side service key.
+
+Frontend pages: `/` (landing), `/register`, `/login`, `/verify-email`,
+`/forgot-password`, `/reset-password`, `/dashboard`, `/dashboard/profile`,
+`/dashboard/security/sessions`. Customer login redirects to `/dashboard`,
+admin roles redirect to `/admin`; customer routes redirect to `/login`, and
+admin routes additionally require ADMIN/SUPER_ADMIN.
+
+#### SUPER_ADMIN bootstrap
+
+There is no public bootstrap API. Run the CLI once against the migrated
+database:
+
+```powershell
+$env:DATABASE_URL="postgresql+psycopg://avwap:avwap@127.0.0.1:5432/avwap"
+.\.venv-backend\Scripts\python.exe -m backend.cli.bootstrap_admin `
+  --email "admin@yourdomain.com" --password "Use-A-Strong!Passphrase123"
+```
+
+Or set `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` and run it without flags.
+The command refuses to create a second SUPER_ADMIN and records an audit event.
+Docker equivalent:
+
+```powershell
+docker compose up -d --build
+docker compose exec backend python -m backend.cli.bootstrap_admin `
+  --email "admin@yourdomain.com" --password "Use-A-Strong!Passphrase123"
+```
+
+Change the bootstrap password after first login from
+`/dashboard/security/sessions`.
+
+### Scheduler and pipeline (Phase 4)
+
+```
+Scheduler process (one instance, advisory lock)
+  -> PENDING pipeline_jobs (SCHEDULED)
+      |
+Worker process (FOR UPDATE SKIP LOCKED claims)
+  -> ingestion (FYERS -> PostgreSQL) -> scanner -> immutable scan_run
+      |
+API / Next.js admin  (status, controls, progress, logs, cancel)
+```
+
+- Automatic refresh default: **56 minutes**, `Asia/Kolkata` scheduling, UTC
+  storage. Interval, market hours, holidays and manual-outside-hours are stored
+  in `scheduler_settings` and editable from the admin UI/API.
+- Scheduled runs only enqueue while the market is open (weekends, configured
+  holidays and outside 09:15–15:30 IST are skipped). Manual runs still work.
+- Only one pipeline job may be PENDING/RUNNING at a time.
+- A dedicated worker executes ingestion first, then scanning; the scan records
+  `pipeline_job_id` and `ingestion_job_id`.
+- Ingestion failures skip the scan and never touch the last successful
+  snapshot. Cancellation is cooperative: the worker acknowledges it between
+  instruments and marks the job CANCELLED.
+- Every RUNNING job updates `heartbeat_at`; stale jobs are marked FAILED (or
+  CANCELLED if cancellation was requested) by the worker recovery sweep.
+- Per-instrument outcomes are copied into `pipeline_job_logs` for the job
+  detail page.
+
+Admin UI: `http://localhost:3000/admin/pipeline`
+
+- Pause / resume, change interval, Update Market Data Now, Run Scanner Now.
+- Live status cards (stage, processed/total, failures) poll every 5 seconds.
+- Jobs table with status filter, pagination, cancel and per-job logs at
+  `/admin/pipeline/{job_id}`.
+- Stale data: `Run Scanner Now` first warns; the dialog offers
+  `confirm_stale=true` to scan anyway.
+
+Local commands (scheduled tasks already run these):
+
+```powershell
+.\scripts\run_worker.cmd        # pipeline worker
+.\scripts\run_scheduler.cmd     # single scheduler instance
+.\scripts\run_api.cmd
+.\scripts\run_web.cmd
+```
+
+Docker (all services, images built):
+
+```powershell
+# stop the local Windows tasks first if ports 3000/8000/5432 are in use
+docker compose up -d --build
+docker compose ps
+```
+
+Environment variables (new in Phase 4):
+
+```
+SCHEDULER_ENABLED=true
+SCHEDULER_INTERVAL_MINUTES=56
+SCHEDULER_TICK_SECONDS=15
+WORKER_POLL_SECONDS=2
+JOB_HEARTBEAT_TIMEOUT_SECONDS=900
+SCAN_STALE_WARNING_HOURS=24
+MARKET_HOLIDAYS=2026-01-26,2026-03-04   # ISO dates, configuration only
+```
+
+Troubleshooting:
+
+- Job stuck PENDING: worker not running (`VWAPSentinelWorker` / container).
+- Job RUNNING with no progress: worker crashed; recovery marks it FAILED after
+  the heartbeat timeout, then requeue.
+- Scheduler does nothing: paused, market closed, or a job is already active.
+  Check `/admin/scheduler/status` and `logs/scheduler.out.log`.
+- FYERS auth errors: refresh the token from `/admin`; ingestion fails without
+  touching stored candles.
+- 409 on refresh: another pipeline is pending/running. Use the existing job.
+- Stale scan warning: run ingestion or confirm stale scanning explicitly.
+
+### Admin scans
+
+Open `http://localhost:3000/admin/scans` to run the scanner on stored candles and
+inspect results. Each run is an immutable snapshot: `scan_runs` stores the run
+metadata and scanner config hash, `scan_results` stores the denormalised match
+row, and `scan_result_candles` preserves the exact pattern-window OHLCV. Running
+again creates a new run and never mutates history. A PostgreSQL advisory lock
+prevents overlapping scans (second request gets HTTP 409).
+
+```powershell
+curl.exe -X POST -H "X-Admin-Key: dev-admin-key" "http://localhost:8000/api/v1/admin/scans/run"
+curl.exe -H "X-Admin-Key: dev-admin-key" "http://localhost:8000/api/v1/admin/scans/latest"
+```
+
+### Known limitations
+
+- FYERS access tokens expire daily; refresh them from the admin panel
+  (**Connect / Re-login FYERS**). Register
+  `FYERS_BACKEND_REDIRECT_URI` (default
+  `http://localhost:8000/api/v1/fyers/callback`) in the FYERS API dashboard
+  once. Until the callback URL is registered, FYERS rejects the login.
+- Authentication defaults are development-only: `AUTH_SECRET_KEY` has a
+  placeholder value, `AUTH_DEV_EXPOSE_TOKENS=true` returns verification/reset
+  tokens, `COOKIE_SECURE=false` and email uses the console provider. Harden
+  these before any public deployment (strong secret, HTTPS cookies, SMTP).
+- Access JWTs stay valid until they expire even after logout; logout revokes
+  refresh tokens and sessions, not already-issued access tokens.
+- Tokens are returned in the JSON response for future mobile clients; the web
+  app relies on HttpOnly cookies and never stores tokens in browser storage.
+- The `csrf_token` cookie is intentionally readable by JavaScript
+  (double-submit pattern).
+- Admin endpoints accept either an administrator JWT or the server-side
+  `ADMIN_API_KEY` for operational tooling; rotate that key outside development.
+- Docker images build and all containers start, but this Windows Docker Desktop
+  instance did not publish host port 8000 for the API container, so the verified
+  local path uses the scheduled tasks/scripts.
+- Scanner thresholds currently use the default `PatternConfig`; an admin
+  settings UI is pending.
+- The scheduler was verified through its decision gate and live worker/API
+  runs, but an automatic market-hours enqueue cannot fire on a weekend. On a
+  trading day it enqueues at the configured interval.
+
+
+- AVWAP values are computed on request, not materialised, to avoid drift.
+- No table partitioning yet; revisit if candle volume grows substantially.

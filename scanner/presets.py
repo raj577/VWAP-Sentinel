@@ -69,6 +69,8 @@ class ScannerPreset:
             "allowed_patterns": list(config.allowed_patterns),
             "require_close_above_avwap": config.require_close_above_avwap,
             "require_close_above_vwap": config.require_close_above_vwap,
+            "below_reference": config.below_reference,
+            "below_candle": config.below_candle,
             "saved_at": self.saved_at,
         }
 
@@ -99,6 +101,8 @@ class ScannerPreset:
                 require_close_above_vwap=bool(
                     raw.get("require_close_above_vwap", False)
                 ),
+                below_reference=str(raw.get("below_reference", "off")),
+                below_candle=str(raw.get("below_candle", "previous")),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise PresetError(f"Preset {name!r} is invalid: {exc}") from exc

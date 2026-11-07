@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-ink text-[#F5F7FA] antialiased;
+}
+
+::selection {
+  background: rgba(39, 224, 138, 0.28);
+  color: #f5f7fa;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .glass {
+    background: rgba(17, 28, 45, 0.72);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .grid-fade {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
+  }
+
+  .hero-glow {
+    background:
+      radial-gradient(ellipse 60% 50% at 18% 0%, rgba(39, 224, 138, 0.16), transparent 60%),
+      radial-gradient(ellipse 55% 45% at 88% 12%, rgba(54, 163, 255, 0.14), transparent 62%);
+  }
+
+  .card-sheen {
+    background:
+      linear-gradient(160deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0) 42%),
+      #111c2d;
+  }
+
+  .line-draw {
+    stroke-dasharray: 1200;
+    stroke-dashoffset: 1200;
+    animation: line-draw 2.4s ease-out 0.3s forwards;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .line-draw {
+    stroke-dashoffset: 0;
+  }
+}

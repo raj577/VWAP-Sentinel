@@ -138,3 +138,22 @@ def test_invalid_preset_values_raise(tmp_path):
 def test_empty_preset_name_is_rejected():
     with pytest.raises(PresetError):
         ScannerPreset.from_config("   ", "60", _config())
+
+def test_below_filters_roundtrip(tmp_path):
+    store = PresetStore(tmp_path / "scanner.json")
+    config = PatternConfig(below_reference="vwap", below_candle="second_previous")
+    store.save(ScannerPreset.from_config("Below VWAP", "60", config))
+
+    loaded = store.get("Below VWAP")
+    assert loaded is not None
+    assert loaded.config.below_reference == "vwap"
+    assert loaded.config.below_candle == "second_previous"
+
+
+def test_legacy_preset_defaults_below_filters_off():
+    raw = ScannerPreset.from_config("Old", "60", _config()).to_dict()
+    raw.pop("below_reference")
+    raw.pop("below_candle")
+    preset = ScannerPreset.from_dict("Old", raw)
+    assert preset.config.below_reference == "off"
+    assert preset.config.below_candle == "previous"

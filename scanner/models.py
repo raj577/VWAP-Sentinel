@@ -20,6 +20,9 @@ PATTERN_TYPES: tuple[str, ...] = (
     PATTERN_RECLAIM,
 )
 
+BELOW_REFERENCES: tuple[str, ...] = ("off", "avwap", "vwap", "either")
+BELOW_CANDLES: tuple[str, ...] = ("previous", "second_previous", "either")
+
 
 @dataclass(frozen=True)
 class Instrument:
@@ -59,6 +62,8 @@ class PatternConfig:
     allowed_patterns: tuple[str, ...] = PATTERN_TYPES
     require_close_above_avwap: bool = False
     require_close_above_vwap: bool = False
+    below_reference: str = "off"
+    below_candle: str = "previous"
 
     def __post_init__(self) -> None:
         if self.min_candles < 1:
@@ -84,6 +89,10 @@ class PatternConfig:
         unknown = set(self.allowed_patterns) - set(PATTERN_TYPES)
         if unknown:
             raise ValueError(f"Unknown pattern types: {sorted(unknown)}")
+        if self.below_reference not in BELOW_REFERENCES:
+            raise ValueError(f"Unknown below reference: {self.below_reference!r}")
+        if self.below_candle not in BELOW_CANDLES:
+            raise ValueError(f"Unknown below candle: {self.below_candle!r}")
 
 
 @dataclass(frozen=True)
